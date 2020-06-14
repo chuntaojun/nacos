@@ -30,4 +30,9 @@ public class ClassUtilsTest {
 		Assert.assertEquals(genericType.getType(), new TypeToken<java.util.List<java.lang.String>>(){}.getType());
 	}
 
+	@Test
+	public void test_packageName() {
+		System.out.println(ClassUtils.getPackageName(ClassUtils.class));
+	}
+
 }

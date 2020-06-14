@@ -15,7 +15,9 @@
  */
 package com.alibaba.nacos.naming.healthcheck;
 
+import com.alibaba.nacos.common.executor.ExecutorFactory;
 import com.alibaba.nacos.common.utils.Objects;
+import com.alibaba.nacos.core.utils.ClassUtils;
 import com.alibaba.nacos.naming.core.Cluster;
 import com.alibaba.nacos.naming.core.Instance;
 import com.alibaba.nacos.naming.misc.Loggers;
@@ -93,7 +95,7 @@ public class TcpSuperSenseProcessor implements HealthCheckProcessor, Runnable {
     });
 
     private static ScheduledExecutorService NIO_EXECUTOR
-        = Executors.newScheduledThreadPool(NIO_THREAD_COUNT,
+        = ExecutorFactory.newScheduledExecutorService(ClassUtils.getPackageName(TcpSuperSenseProcessor.class), NIO_THREAD_COUNT,
         new ThreadFactory() {
             @Override
             public Thread newThread(Runnable r) {

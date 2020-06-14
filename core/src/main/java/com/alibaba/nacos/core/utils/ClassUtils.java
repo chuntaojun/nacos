@@ -72,4 +72,9 @@ public final class ClassUtils {
 		return cls.getSimpleName();
 	}
 
+	public static String getPackageName(Class cls) {
+		Objects.requireNonNull(cls, "cls");
+		return cls.getPackage().getName();
+	}
+
 }

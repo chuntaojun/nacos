@@ -1,12 +1,11 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
+ * Copyright 1999-2018 Alibaba Group Holding Ltd.
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.alibaba.nacos.naming.core;
 
 import com.alibaba.nacos.api.exception.NacosException;
@@ -130,12 +130,12 @@ public class LessorCenter implements MemberChangeListener {
 	}
 
 	private static Map<String, Map<String, List<Instance>>> parse(Collection<Instance> instances) {
-		Map<String, Map<String, List<Instance>>> waitRemove = new HashMap<>();
+		Map<String, Map<String, List<Instance>>> waitRemove = new HashMap<>(16);
 		instances.forEach(instance -> {
 			final String namespace = instance.getTenant();
 			final String serviceName = instance.getServiceName();
-			waitRemove.computeIfAbsent(namespace, s -> new HashMap<>());
-			waitRemove.get(namespace).computeIfAbsent(serviceName, s -> new ArrayList<>());
+			waitRemove.computeIfAbsent(namespace, s -> new HashMap<>(16));
+			waitRemove.get(namespace).computeIfAbsent(serviceName, s -> new ArrayList<>(64));
 			waitRemove.get(namespace).get(serviceName).add(instance);
 		});
 		return waitRemove;

@@ -180,7 +180,7 @@ public class Cluster extends com.alibaba.nacos.api.naming.pojo.Cluster implement
         super.clone();
         Cluster cluster = new Cluster(this.getName(), service);
         cluster.setHealthChecker(getHealthChecker().clone());
-        cluster.persistentInstances = new HashMap<>();
+        cluster.persistentInstances = new HashMap<>(8);
         cluster.checkTask = null;
         cluster.metadata = new HashMap<>(metadata);
         return cluster;

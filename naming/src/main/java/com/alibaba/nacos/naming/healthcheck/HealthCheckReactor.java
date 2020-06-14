@@ -15,10 +15,12 @@
  */
 package com.alibaba.nacos.naming.healthcheck;
 
-import java.util.concurrent.Executors;
+import com.alibaba.nacos.common.executor.ExecutorFactory;
+import com.alibaba.nacos.common.executor.NameThreadFactory;
+import com.alibaba.nacos.core.utils.ClassUtils;
+
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -31,17 +33,10 @@ public class HealthCheckReactor {
     static {
 
         int processorCount = Runtime.getRuntime().availableProcessors();
-        EXECUTOR
-                = Executors
-                .newScheduledThreadPool(processorCount <= 1 ? 1 : processorCount / 2, new ThreadFactory() {
-                    @Override
-                    public Thread newThread(Runnable r) {
-                        Thread thread = new Thread(r);
-                        thread.setDaemon(true);
-                        thread.setName("com.alibaba.nacos.naming.health");
-                        return thread;
-                    }
-                });
+        EXECUTOR = ExecutorFactory.newScheduledExecutorService(
+                ClassUtils.getPackageName(HealthCheckReactor.class),
+                processorCount <= 1 ? 1 : processorCount / 2,
+                new NameThreadFactory("com.alibaba.nacos.naming.health"));
     }
 
     public static ScheduledFuture<?> scheduleCheck(HealthCheckTask task) {

@@ -39,6 +39,7 @@ import java.util.function.BiConsumer;
  *
  * @author <a href="mailto:liaochuntao@live.com">liaochuntao</a>
  */
+@SuppressWarnings("all")
 public class Lessor {
 
 	private static final AtomicIntegerFieldUpdater<Lessor> WORKER_STATE_UPDATER =
