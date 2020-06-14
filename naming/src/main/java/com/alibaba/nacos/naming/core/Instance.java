@@ -18,8 +18,9 @@ package com.alibaba.nacos.naming.core;
 import com.alibaba.nacos.api.common.Constants;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.alibaba.nacos.common.utils.JacksonUtils;
+import com.alibaba.nacos.common.utils.Objects;
+import com.alibaba.nacos.common.utils.StringUtils;
 import com.alibaba.nacos.naming.healthcheck.HealthCheckStatus;
-import com.alibaba.nacos.naming.misc.Loggers;
 import com.alibaba.nacos.naming.misc.UtilsAndCommons;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -27,8 +28,11 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include;
 
 import org.apache.commons.lang3.math.NumberUtils;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -38,7 +42,7 @@ import java.util.regex.Pattern;
  * @author nkorange
  */
 @JsonInclude(Include.NON_NULL)
-public class Instance extends com.alibaba.nacos.api.naming.pojo.Instance implements Comparable {
+public class Instance extends com.alibaba.nacos.api.naming.pojo.Instance implements Comparable<Instance> {
 
     private static final double MAX_WEIGHT_VALUE = 10000.0D;
     private static final double MIN_POSITIVE_WEIGHT_VALUE = 0.01D;
@@ -46,10 +50,14 @@ public class Instance extends com.alibaba.nacos.api.naming.pojo.Instance impleme
 
     private volatile long lastBeat = System.currentTimeMillis();
 
+    private static final AtomicLongFieldUpdater<Instance> UPDATER = AtomicLongFieldUpdater.newUpdater(Instance.class, "lastBeat");
+
     @JsonIgnore
     private volatile boolean mockValid = false;
 
     private volatile boolean marked = false;
+
+    private String datumKey = null;
 
     private String tenant;
 
@@ -79,7 +87,7 @@ public class Instance extends com.alibaba.nacos.api.naming.pojo.Instance impleme
     }
 
     public void setLastBeat(long lastBeat) {
-        this.lastBeat = lastBeat;
+        UPDATER.compareAndSet(this, this.lastBeat, Math.max(this.lastBeat, lastBeat));
     }
 
     public Instance(String ip, int port) {
@@ -230,11 +238,10 @@ public class Instance extends com.alibaba.nacos.api.naming.pojo.Instance impleme
 
     @JsonIgnore
     public String getDatumKey() {
-        if (getPort() > 0) {
-            return getIp() + ":" + getPort() + ":" + UtilsAndCommons.LOCALHOST_SITE + ":" + getClusterName();
-        } else {
-            return getIp() + ":" + UtilsAndCommons.LOCALHOST_SITE + ":" + getClusterName();
+        if (StringUtils.isBlank(datumKey)) {
+            datumKey = buildDatumKey(getIp(), getPort(), getClusterName());
         }
+        return datumKey;
     }
 
     @JsonIgnore
@@ -248,7 +255,7 @@ public class Instance extends com.alibaba.nacos.api.naming.pojo.Instance impleme
 
     @Override
     public int hashCode() {
-        return getIp().hashCode();
+        return Objects.hashCode(getIp());
     }
 
     public void setBeingChecked(boolean isBeingChecked) {
@@ -352,15 +359,143 @@ public class Instance extends com.alibaba.nacos.api.naming.pojo.Instance impleme
     }
 
     @Override
-    public int compareTo(Object o) {
-        if (!(o instanceof Instance)) {
-            Loggers.SRV_LOG.error("[INSTANCE-COMPARE] Object is not an instance of IPAdress, object: {}", o.getClass());
-            throw new IllegalArgumentException("Object is not an instance of IPAdress,object: " + o.getClass());
+    public int compareTo(Instance instance) {
+        String ipKey = instance.toString();
+        return this.toString().compareTo(ipKey);
+    }
+
+    public static String buildDatumKey(final String ip, final int port, final String clusterName) {
+        if (port > 0) {
+            return ip + ":" + port + ":" + UtilsAndCommons.LOCALHOST_SITE + ":" + clusterName;
+        } else {
+            return ip + ":" + UtilsAndCommons.LOCALHOST_SITE + ":" + clusterName;
+        }
+    }
+
+    public static InstanceBuilder builder() {
+        return new InstanceBuilder();
+    }
+
+    public static final class InstanceBuilder {
+        private String instanceId;
+        private String ip;
+        private int port;
+        private double weight = 1.0D;
+        private boolean healthy = true;
+        private boolean enabled = true;
+        private boolean ephemeral = true;
+        private volatile long lastBeat = System.currentTimeMillis();
+        private String clusterName;
+        private volatile boolean mockValid = false;
+        private volatile boolean marked = false;
+        private String serviceName;
+        private String datumKey = null;
+        private String tenant;
+        private String app;
+        private Map<String, String> metadata = new HashMap<String, String>();
+
+        private InstanceBuilder() {
         }
 
-        Instance instance = (Instance) o;
-        String ipKey = instance.toString();
+        public InstanceBuilder instanceId(String instanceId) {
+            this.instanceId = instanceId;
+            return this;
+        }
 
-        return this.toString().compareTo(ipKey);
+        public InstanceBuilder ip(String ip) {
+            this.ip = ip;
+            return this;
+        }
+
+        public InstanceBuilder port(int port) {
+            this.port = port;
+            return this;
+        }
+
+        public InstanceBuilder weight(double weight) {
+            this.weight = weight;
+            return this;
+        }
+
+        public InstanceBuilder healthy(boolean healthy) {
+            this.healthy = healthy;
+            return this;
+        }
+
+        public InstanceBuilder enabled(boolean enabled) {
+            this.enabled = enabled;
+            return this;
+        }
+
+        public InstanceBuilder ephemeral(boolean ephemeral) {
+            this.ephemeral = ephemeral;
+            return this;
+        }
+
+        public InstanceBuilder lastBeat(long lastBeat) {
+            this.lastBeat = lastBeat;
+            return this;
+        }
+
+        public InstanceBuilder clusterName(String clusterName) {
+            this.clusterName = clusterName;
+            return this;
+        }
+
+        public InstanceBuilder mockValid(boolean mockValid) {
+            this.mockValid = mockValid;
+            return this;
+        }
+
+        public InstanceBuilder marked(boolean marked) {
+            this.marked = marked;
+            return this;
+        }
+
+        public InstanceBuilder serviceName(String serviceName) {
+            this.serviceName = serviceName;
+            return this;
+        }
+
+        public InstanceBuilder datumKey(String datumKey) {
+            this.datumKey = datumKey;
+            return this;
+        }
+
+        public InstanceBuilder tenant(String tenant) {
+            this.tenant = tenant;
+            return this;
+        }
+
+        public InstanceBuilder app(String app) {
+            this.app = app;
+            return this;
+        }
+
+        public InstanceBuilder metadata(Map<String, String> metadata) {
+            this.metadata = metadata;
+            return this;
+        }
+
+        public Instance build() {
+            Instance instance = new Instance();
+            instance.setInstanceId(instanceId);
+            instance.setIp(ip);
+            instance.setPort(port);
+            instance.setWeight(weight);
+            instance.setHealthy(healthy);
+            instance.setEnabled(enabled);
+            instance.setEphemeral(ephemeral);
+            instance.setLastBeat(lastBeat);
+            instance.setClusterName(clusterName);
+            instance.setMockValid(mockValid);
+            instance.setMarked(marked);
+            instance.setServiceName(serviceName);
+            instance.setTenant(tenant);
+            instance.setApp(app);
+            instance.setMetadata(metadata);
+            instance.datumKey = this.datumKey;
+            return instance;
+        }
     }
 }

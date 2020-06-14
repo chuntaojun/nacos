@@ -28,6 +28,7 @@ import org.springframework.stereotype.Component;
 
 import java.net.SocketTimeoutException;
 import java.sql.*;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.*;
 
@@ -86,7 +87,7 @@ public class MysqlHealthCheckProcessor implements HealthCheckProcessor {
 
     @Override
     public void process(HealthCheckTask task) {
-        List<Instance> ips = task.getCluster().allIPs(false);
+        Collection<Instance> ips = task.getCluster().allIPs(false).values();
 
         SRV_LOG.debug("mysql check, ips:" + ips);
         if (CollectionUtils.isEmpty(ips)) {

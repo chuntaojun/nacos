@@ -21,12 +21,14 @@ import com.alibaba.nacos.api.naming.utils.NamingUtils;
 import com.alibaba.nacos.common.utils.JacksonUtils;
 import com.alibaba.nacos.core.cluster.Member;
 import com.alibaba.nacos.core.cluster.ServerMemberManager;
+import com.alibaba.nacos.core.utils.ApplicationUtils;
 import com.alibaba.nacos.naming.consistency.ConsistencyService;
 import com.alibaba.nacos.naming.consistency.Datum;
 import com.alibaba.nacos.naming.consistency.KeyBuilder;
 import com.alibaba.nacos.naming.consistency.RecordListener;
 import com.alibaba.nacos.naming.consistency.persistent.raft.RaftPeer;
 import com.alibaba.nacos.naming.consistency.persistent.raft.RaftPeerSet;
+import com.alibaba.nacos.naming.misc.GlobalConfig;
 import com.alibaba.nacos.naming.misc.GlobalExecutor;
 import com.alibaba.nacos.naming.misc.Loggers;
 import com.alibaba.nacos.naming.misc.Message;
@@ -40,6 +42,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.google.common.collect.Sets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -70,8 +73,21 @@ import org.springframework.util.CollectionUtils;
 @Component
 public class ServiceManager implements RecordListener<Service> {
 
+    private int maxFinalizeCount = 3;
+
+    private final Object putServiceLock = new Object();
+
+    @Value("${nacos.naming.empty-service.auto-clean:false}")
+    private boolean emptyServiceAutoClean;
+
+    @Value("${nacos.naming.empty-service.clean.initial-delay-ms:60000}")
+    private int cleanEmptyServiceDelay;
+
+    @Value("${nacos.naming.empty-service.clean.period-time-ms:20000}")
+    private int cleanEmptyServicePeriod;
+
     /**
-     * Map<namespace, Map<group::serviceName, Service>>
+     * Map<namespace, Map<group@@serviceName, Service>>
      */
     private Map<String, Map<String, Service>> serviceMap = new ConcurrentHashMap<>();
 
@@ -94,18 +110,7 @@ public class ServiceManager implements RecordListener<Service> {
 
     private final RaftPeerSet raftPeerSet;
 
-    private int maxFinalizeCount = 3;
-
-    private final Object putServiceLock = new Object();
-
-    @Value("${nacos.naming.empty-service.auto-clean:false}")
-    private boolean emptyServiceAutoClean;
-
-    @Value("${nacos.naming.empty-service.clean.initial-delay-ms:60000}")
-    private int cleanEmptyServiceDelay;
-
-    @Value("${nacos.naming.empty-service.clean.period-time-ms:20000}")
-    private int cleanEmptyServicePeriod;
+    private final LessorCenter lessorCenter;
 
     public ServiceManager(SwitchDomain switchDomain, DistroMapper distroMapper,
             ServerMemberManager memberManager, PushService pushService,
@@ -115,6 +120,12 @@ public class ServiceManager implements RecordListener<Service> {
         this.memberManager = memberManager;
         this.pushService = pushService;
         this.raftPeerSet = raftPeerSet;
+        this.lessorCenter = new LessorCenter(
+                ApplicationUtils.getProperty("nacos.naming.lessor.workers", Integer.class, 4),
+                ApplicationUtils.getProperty("nacos.naming.lessor.slot", Integer.class, 16),
+                this,
+                distroMapper,
+                ApplicationUtils.getBean(GlobalConfig.class));
     }
 
     @PostConstruct
@@ -449,6 +460,11 @@ public class ServiceManager implements RecordListener<Service> {
         }
 
         addInstance(namespaceId, serviceName, instance.isEphemeral(), instance);
+
+        // When the instance registration is complete, add it to the lease time wheel
+        if (instance.isEphemeral()) {
+            lessorCenter.register(instance);
+        }
     }
 
     public void updateInstance(String namespaceId, String serviceName, Instance instance) throws NacosException {
@@ -492,14 +508,10 @@ public class ServiceManager implements RecordListener<Service> {
     }
 
     public void removeInstance(String namespaceId, String serviceName, boolean ephemeral, Service service, Instance... ips) throws NacosException {
-
-        String key = KeyBuilder.buildInstanceListKey(namespaceId, serviceName, ephemeral);
-
         List<Instance> instanceList = substractIpAddresses(service, ephemeral, ips);
-
+        String key = KeyBuilder.buildInstanceListKey(namespaceId, serviceName, ephemeral);
         Instances instances = new Instances();
         instances.setInstanceList(instanceList);
-
         consistencyService.put(key, instances);
     }
 
@@ -527,6 +539,10 @@ public class ServiceManager implements RecordListener<Service> {
     }
 
     public List<Instance> updateIpAddresses(Service service, String action, boolean ephemeral, Instance... ips) throws NacosException {
+        return updateIpAddresses(service, action, ephemeral, Arrays.asList(ips));
+    }
+
+    public List<Instance> updateIpAddresses(Service service, String action, boolean ephemeral, Collection<Instance> ips) throws NacosException {
 
         Datum datum = consistencyService.get(KeyBuilder.buildInstanceListKey(service.getNamespaceId(), service.getName(), ephemeral));
 
@@ -543,10 +559,11 @@ public class ServiceManager implements RecordListener<Service> {
         if (datum != null) {
             instanceMap = setValid(((Instances) datum.value).getInstanceList(), currentInstances);
         } else {
-            instanceMap = new HashMap<>(ips.length);
+            instanceMap = new HashMap<>(ips.size());
         }
 
         for (Instance instance : ips) {
+            instance.setTenant(service.getNamespaceId());
             if (!service.getClusterMap().containsKey(instance.getClusterName())) {
                 Cluster cluster = new Cluster(instance.getClusterName(), service);
                 cluster.init();

@@ -26,6 +26,18 @@ import java.util.List;
 @SuppressWarnings("all")
 public class Objects {
 
+	public static void requireTrue(boolean expression, String msg) {
+		if (!expression) {
+			throw new IllegalArgumentException(msg);
+		}
+	}
+
+	public static void requireFalse(boolean expression, String msg) {
+		if (expression) {
+			throw new IllegalArgumentException(msg);
+		}
+	}
+
 	/**
 	 * Returns {@code true} if the arguments are equal to each other
 	 * and {@code false} otherwise.

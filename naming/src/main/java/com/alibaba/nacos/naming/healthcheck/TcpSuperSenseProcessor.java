@@ -15,12 +15,13 @@
  */
 package com.alibaba.nacos.naming.healthcheck;
 
+import com.alibaba.nacos.common.utils.Objects;
 import com.alibaba.nacos.naming.core.Cluster;
 import com.alibaba.nacos.naming.core.Instance;
 import com.alibaba.nacos.naming.misc.Loggers;
 import com.alibaba.nacos.naming.misc.SwitchDomain;
 import com.alibaba.nacos.naming.monitor.MetricsMonitor;
-import org.apache.commons.collections.CollectionUtils;
+import com.alibaba.nacos.common.utils.CollectionUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -30,8 +31,20 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 
 import static com.alibaba.nacos.naming.misc.Loggers.SRV_LOG;
 
@@ -107,7 +120,7 @@ public class TcpSuperSenseProcessor implements HealthCheckProcessor, Runnable {
 
     @Override
     public void process(HealthCheckTask task) {
-        List<Instance> ips = task.getCluster().allIPs(false);
+        Collection<Instance> ips = task.getCluster().allIPs(false).values();
 
         if (CollectionUtils.isEmpty(ips)) {
             return;
@@ -298,7 +311,7 @@ public class TcpSuperSenseProcessor implements HealthCheckProcessor, Runnable {
 
         @Override
         public int hashCode() {
-            return Objects.hash(ip.toJSON());
+            return Objects.hashCode(ip.toJSON());
         }
 
         @Override

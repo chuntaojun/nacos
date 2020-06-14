@@ -49,4 +49,13 @@ public final class ConvertUtils {
         return Boolean.parseBoolean(val);
     }
 
+    public static int normalizeToPower2(int num) {
+        int normalized = 1;
+        while (normalized < num) {
+            normalized <<= 1;
+        }
+        return normalized;
+    }
+
+
 }

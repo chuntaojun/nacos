@@ -16,6 +16,8 @@
 package com.alibaba.nacos.naming.healthcheck;
 
 import com.alibaba.nacos.common.utils.JacksonUtils;
+import com.alibaba.nacos.common.utils.StringUtils;
+import com.alibaba.nacos.naming.misc.UtilsAndCommons;
 
 import java.util.Map;
 
@@ -25,6 +27,7 @@ import java.util.Map;
  * @author nacos
  */
 public class RsInfo {
+    private String datumKey = null;
     private double load;
     private double cpu;
     private double rt;
@@ -146,5 +149,130 @@ public class RsInfo {
     @Override
     public String toString() {
         return JacksonUtils.toJson(this);
+    }
+
+    public String getDatumKey() {
+        if (StringUtils.isBlank(datumKey)) {
+            if (getPort() > 0) {
+                datumKey = getIp() + ":" + getPort() + ":" + UtilsAndCommons.LOCALHOST_SITE + ":" + getCluster();
+            }
+            else {
+                datumKey = getIp() + ":" + UtilsAndCommons.LOCALHOST_SITE + ":" + getCluster();
+            }
+        }
+        return datumKey;
+    }
+
+    public static RsInfoBuilder builder() {
+        return new RsInfoBuilder();
+    }
+
+    public static final class RsInfoBuilder {
+        private String datumKey = null;
+        private double load;
+        private double cpu;
+        private double rt;
+        private double qps;
+        private double mem;
+        private int port;
+        private String ip;
+        private String serviceName;
+        private String ak;
+        private String cluster;
+        private double weight;
+        private boolean ephemeral = true;
+        private Map<String, String> metadata;
+
+        private RsInfoBuilder() {
+        }
+
+        public RsInfoBuilder datumKey(String datumKey) {
+            this.datumKey = datumKey;
+            return this;
+        }
+
+        public RsInfoBuilder load(double load) {
+            this.load = load;
+            return this;
+        }
+
+        public RsInfoBuilder cpu(double cpu) {
+            this.cpu = cpu;
+            return this;
+        }
+
+        public RsInfoBuilder rt(double rt) {
+            this.rt = rt;
+            return this;
+        }
+
+        public RsInfoBuilder qps(double qps) {
+            this.qps = qps;
+            return this;
+        }
+
+        public RsInfoBuilder mem(double mem) {
+            this.mem = mem;
+            return this;
+        }
+
+        public RsInfoBuilder port(int port) {
+            this.port = port;
+            return this;
+        }
+
+        public RsInfoBuilder ip(String ip) {
+            this.ip = ip;
+            return this;
+        }
+
+        public RsInfoBuilder serviceName(String serviceName) {
+            this.serviceName = serviceName;
+            return this;
+        }
+
+        public RsInfoBuilder ak(String ak) {
+            this.ak = ak;
+            return this;
+        }
+
+        public RsInfoBuilder cluster(String cluster) {
+            this.cluster = cluster;
+            return this;
+        }
+
+        public RsInfoBuilder weight(double weight) {
+            this.weight = weight;
+            return this;
+        }
+
+        public RsInfoBuilder ephemeral(boolean ephemeral) {
+            this.ephemeral = ephemeral;
+            return this;
+        }
+
+        public RsInfoBuilder metadata(Map<String, String> metadata) {
+            this.metadata = metadata;
+            return this;
+        }
+
+        public RsInfo build() {
+            RsInfo rsInfo = new RsInfo();
+            rsInfo.setLoad(load);
+            rsInfo.setCpu(cpu);
+            rsInfo.setRt(rt);
+            rsInfo.setQps(qps);
+            rsInfo.setMem(mem);
+            rsInfo.setPort(port);
+            rsInfo.setIp(ip);
+            rsInfo.setServiceName(serviceName);
+            rsInfo.setAk(ak);
+            rsInfo.setCluster(cluster);
+            rsInfo.setWeight(weight);
+            rsInfo.setEphemeral(ephemeral);
+            rsInfo.setMetadata(metadata);
+            rsInfo.datumKey = this.datumKey;
+            return rsInfo;
+        }
     }
 }

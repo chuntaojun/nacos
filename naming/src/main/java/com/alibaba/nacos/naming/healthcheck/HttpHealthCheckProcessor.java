@@ -33,6 +33,7 @@ import java.net.ConnectException;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
@@ -86,7 +87,7 @@ public class HttpHealthCheckProcessor implements HealthCheckProcessor {
 
     @Override
     public void process(HealthCheckTask task) {
-        List<Instance> ips = task.getCluster().allIPs(false);
+        Collection<Instance> ips = task.getCluster().allIPs(false).values();
         if (CollectionUtils.isEmpty(ips)) {
             return;
         }

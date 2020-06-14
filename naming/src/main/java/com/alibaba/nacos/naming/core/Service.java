@@ -15,15 +15,13 @@
  */
 package com.alibaba.nacos.naming.core;
 
+import com.alibaba.nacos.common.utils.CollectionUtils;
 import com.alibaba.nacos.common.utils.JacksonUtils;
 import com.alibaba.nacos.core.utils.ApplicationUtils;
 import com.alibaba.nacos.common.utils.MD5Utils;
 import com.alibaba.nacos.api.common.Constants;
 import com.alibaba.nacos.naming.consistency.KeyBuilder;
 import com.alibaba.nacos.naming.consistency.RecordListener;
-import com.alibaba.nacos.naming.healthcheck.ClientBeatCheckTask;
-import com.alibaba.nacos.naming.healthcheck.ClientBeatProcessor;
-import com.alibaba.nacos.naming.healthcheck.HealthCheckReactor;
 import com.alibaba.nacos.naming.healthcheck.RsInfo;
 import com.alibaba.nacos.naming.misc.Loggers;
 import com.alibaba.nacos.naming.misc.UtilsAndCommons;
@@ -35,11 +33,16 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 
-import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.ListUtils;
 import org.apache.commons.lang3.StringUtils;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Service of Nacos server side
@@ -55,9 +58,6 @@ import java.util.*;
 public class Service extends com.alibaba.nacos.api.naming.pojo.Service implements Record, RecordListener<Instances> {
 
     private static final String SERVICE_NAME_SYNTAX = "[0-9a-zA-Z@\\.:_-]+";
-
-    @JsonIgnore
-    private ClientBeatCheckTask clientBeatCheckTask = new ClientBeatCheckTask(this);
 
     /**
      * Identify the information used to determine how many isEmpty judgments the service has experienced
@@ -108,10 +108,22 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
     }
 
     public void processClientBeat(final RsInfo rsInfo) {
-        ClientBeatProcessor clientBeatProcessor = new ClientBeatProcessor();
-        clientBeatProcessor.setService(this);
-        clientBeatProcessor.setRsInfo(rsInfo);
-        HealthCheckReactor.scheduleNow(clientBeatProcessor);
+        String clusterName = rsInfo.getCluster();
+        String ipKey = rsInfo.getDatumKey();
+        Cluster cluster = getClusterMap().get(clusterName);
+        Instance instance = cluster.find(ipKey, true);
+        if (Loggers.EVT_LOG.isDebugEnabled()) {
+            Loggers.EVT_LOG.debug("[CLIENT-BEAT] refresh beat: {}", rsInfo.toString());
+        }
+        instance.setLastBeat(System.currentTimeMillis());
+        if (!instance.isMarked()) {
+            if (!instance.isHealthy()) {
+                instance.setHealthy(true);
+                Loggers.EVT_LOG.info("service: {} {POS} {IP-ENABLED} valid: {}:{}@{}, region: {}, msg: client beat ok",
+                        instance.getServiceName(), instance.getIp(), instance.getPort(), instance.getClusterName(), UtilsAndCommons.LOCALHOST_SITE);
+                getPushService().serviceChanged(this);
+            }
+        }
     }
 
     public Boolean getEnabled() {
@@ -221,7 +233,7 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
 
                 if (!clusterMap.containsKey(instance.getClusterName())) {
                     Loggers.SRV_LOG.warn("cluster: {} not found, ip: {}, will create new cluster with default configuration.",
-                        instance.getClusterName(), instance.toJSON());
+                            instance.getClusterName(), instance.toJSON());
                     Cluster cluster = new Cluster(instance.getClusterName(), this);
                     cluster.init();
                     getClusterMap().put(instance.getClusterName(), cluster);
@@ -247,21 +259,18 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
 
         setLastModifiedMillis(System.currentTimeMillis());
         getPushService().serviceChanged(this);
-        StringBuilder stringBuilder = new StringBuilder();
 
-        for (Instance instance : allIPs()) {
-            stringBuilder.append(instance.toIPAddr()).append("_").append(instance.isHealthy()).append(",");
-        }
+        StringBuilder builder = new StringBuilder();
+        builder.append("[");
+        allIPs().forEach(instance -> builder.append(instance.toIPAddr()).append("_").append(instance.isHealthy()).append(","));
+        builder.append("]");
 
         Loggers.EVT_LOG.info("[IP-UPDATED] namespace: {}, service: {}, ips: {}",
-            getNamespaceId(), getName(), stringBuilder.toString());
+                getNamespaceId(), getName(), builder);
 
     }
 
     public void init() {
-
-        HealthCheckReactor.scheduleCheck(clientBeatCheckTask);
-
         for (Map.Entry<String, Cluster> entry : clusterMap.entrySet()) {
             entry.getValue().setService(this);
             entry.getValue().init();
@@ -272,7 +281,6 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
         for (Map.Entry<String, Cluster> entry : clusterMap.entrySet()) {
             entry.getValue().destroy();
         }
-        HealthCheckReactor.cancelCheck(clientBeatCheckTask);
     }
 
     public boolean isEmpty() {
@@ -297,7 +305,7 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
     public List<Instance> allIPs(boolean ephemeral) {
         List<Instance> allIPs = new ArrayList<>();
         for (Map.Entry<String, Cluster> entry : clusterMap.entrySet()) {
-            allIPs.addAll(entry.getValue().allIPs(ephemeral));
+            allIPs.addAll(entry.getValue().allIPs(ephemeral).values());
         }
 
         return allIPs;
@@ -476,7 +484,7 @@ public class Service extends com.alibaba.nacos.api.naming.pojo.Service implement
 
         for (Instance ip : ips) {
             String string = ip.getIp() + ":" + ip.getPort() + "_" + ip.getWeight() + "_"
-                + ip.isHealthy() + "_" + ip.getClusterName();
+                    + ip.isHealthy() + "_" + ip.getClusterName();
             ipsString.append(string);
             ipsString.append(",");
         }

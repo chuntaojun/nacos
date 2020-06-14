@@ -22,6 +22,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
@@ -92,7 +93,7 @@ public class AddressServerGeneratorManager {
      * @param instanceList a instance set will generate string response to client.
      * @return the result of response to client
      */
-    public String generateResponseIps(List<Instance> instanceList) {
+    public String generateResponseIps(Collection<Instance> instanceList) {
 
         StringBuilder ips = new StringBuilder();
         instanceList.forEach(instance -> {

@@ -65,6 +65,6 @@ public class ServerListController {
         }
 
         Cluster clusterObj = service.getClusterMap().get(cluster);
-        return ResponseEntity.status(HttpStatus.OK).body(addressServerBuilderManager.generateResponseIps(clusterObj.allIPs(false)));
+        return ResponseEntity.status(HttpStatus.OK).body(addressServerBuilderManager.generateResponseIps(clusterObj.allIPs(false).values()));
     }
 }

@@ -17,6 +17,7 @@
 package com.alibaba.nacos.common.utils;
 
 import java.lang.reflect.Array;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Enumeration;
 import java.util.Iterator;
@@ -29,6 +30,14 @@ import java.util.Map;
  * @author <a href="mailto:liaochuntao@live.com">liaochuntao</a>
  */
 public final class CollectionUtils {
+
+	public static <T> Collection<T> subtract(final Collection<T> a, final Collection<T> b) {
+		ArrayList<T> list = new ArrayList<T>( a );
+		for (T t : b) {
+			list.remove(t);
+		}
+		return list;
+	}
 
 	/**
 	 * Returns the <code>index</code>-th value in <code>object</code>, throwing
