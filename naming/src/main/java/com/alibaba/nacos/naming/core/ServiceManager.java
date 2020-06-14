@@ -125,7 +125,8 @@ public class ServiceManager implements RecordListener<Service> {
                 ApplicationUtils.getProperty("nacos.naming.lessor.slot", Integer.class, 16),
                 this,
                 distroMapper,
-                ApplicationUtils.getBean(GlobalConfig.class));
+                ApplicationUtils.getBean(GlobalConfig.class),
+                ApplicationUtils.getBean(SwitchDomain.class));
     }
 
     @PostConstruct

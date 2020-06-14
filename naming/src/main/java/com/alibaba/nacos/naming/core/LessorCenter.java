@@ -26,6 +26,7 @@ import com.alibaba.nacos.naming.healthcheck.events.InstanceHeartbeatTimeoutEvent
 import com.alibaba.nacos.naming.misc.GlobalConfig;
 import com.alibaba.nacos.naming.misc.GlobalExecutor;
 import com.alibaba.nacos.naming.misc.Loggers;
+import com.alibaba.nacos.naming.misc.SwitchDomain;
 import com.alibaba.nacos.naming.misc.UtilsAndCommons;
 import org.jctools.maps.NonBlockingHashMap;
 import org.jctools.queues.MpscUnboundedArrayQueue;
@@ -48,22 +49,25 @@ public class LessorCenter implements MemberChangeListener {
 	private final ServiceManager serviceManager;
 	private final DistroMapper mapper;
 	private final GlobalConfig config;
+	private final SwitchDomain switchDomain;
 
 	private final Map<String, MpscUnboundedArrayQueue<Instance>> waitSelfResponse = new NonBlockingHashMap<>();
 
 	private AtomicBoolean shutdown = new AtomicBoolean(false);
 
-	public LessorCenter(int size, int slot, ServiceManager serviceManager, DistroMapper mapper, GlobalConfig config) {
+	public LessorCenter(final int size, final int slot, final ServiceManager serviceManager,
+			final DistroMapper mapper, final GlobalConfig config, final SwitchDomain switchDomain) {
 		this.ring = new Lessor[size];
 		this.serviceManager = serviceManager;
 		this.mapper = mapper;
 		this.config = config;
+		this.switchDomain = switchDomain;
 		init(size, slot);
 	}
 
 	private void init(int size, int slot) {
 		for (int i = 0; i < size; i ++) {
-			ring[i] = Lessor.createLessor(slot , Duration.ofSeconds(1), createConsumer());
+			ring[i] = Lessor.createLessor(slot , Duration.ofSeconds(1), config, switchDomain, createConsumer());
 		}
 	}
 

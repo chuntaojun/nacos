@@ -20,7 +20,9 @@ import com.alibaba.nacos.common.executor.NameThreadFactory;
 import com.alibaba.nacos.common.utils.CollectionUtils;
 import com.alibaba.nacos.common.utils.ConvertUtils;
 import com.alibaba.nacos.common.utils.Objects;
+import com.alibaba.nacos.naming.misc.GlobalConfig;
 import com.alibaba.nacos.naming.misc.Loggers;
+import com.alibaba.nacos.naming.misc.SwitchDomain;
 import io.grpc.netty.shaded.io.netty.util.internal.PlatformDependent;
 
 import java.time.Duration;
@@ -62,14 +64,18 @@ public class Lessor {
 	private final BiConsumer<Collection<Instance>, Boolean> consumer;
 	private final Set<Instance> alreadyExpire = new HashSet<>();
 	private final Set<Instance> unHealth = new HashSet<>();
+	private final SwitchDomain switchDomain;
+	private final GlobalConfig config;
 
 	private volatile long startTime;
 
-	public static Lessor createLessor(final int slotNum, final Duration duration, final BiConsumer<Collection<Instance>, Boolean> consumer) {
-		return new Lessor(slotNum, duration, consumer);
+	public static Lessor createLessor(final int slotNum, final Duration duration,
+			final GlobalConfig config, final SwitchDomain switchDomain,
+			final BiConsumer<Collection<Instance>, Boolean> consumer) {
+		return new Lessor(slotNum, duration, config, switchDomain, consumer);
 	}
 
-	private Lessor(final int slotNum, final Duration duration, final BiConsumer<Collection<Instance>, Boolean> consumer) {
+	private Lessor(final int slotNum, final Duration duration, final GlobalConfig config, final SwitchDomain switchDomain, final BiConsumer<Collection<Instance>, Boolean> consumer) {
 		this.tickDuration = duration.toNanos();
 		this.wheel = createWheel(ConvertUtils.normalizeToPower2(slotNum));
 		this.mask = wheel.length - 1;
@@ -77,6 +83,8 @@ public class Lessor {
 				"nacos.core.item.expire.wheel");
 		this.workerThread = threadFactory.newThread(worker);
 		this.consumer = consumer;
+		this.config = config;
+		this.switchDomain = switchDomain;
 	}
 
 	private Slot[] createWheel(final int slotNum) {
@@ -196,6 +204,7 @@ public class Lessor {
 					if (CollectionUtils.isNotEmpty(unHealth)) {
 						consumer.accept(unHealth, true);
 					}
+
 					if (CollectionUtils.isNotEmpty(alreadyExpire)) {
 						consumer.accept(alreadyExpire, false);
 					}
@@ -295,6 +304,12 @@ public class Lessor {
 		}
 
 		@Override
+		public String toString() {
+			return "OverdueWrapper{" + "remainingRounds=" + remainingRounds
+					+ ", deadline=" + deadline + ", target=" + target + '}';
+		}
+
+		@Override
 		public boolean equals(Object o) {
 			if (this == o)
 				return true;
@@ -321,10 +336,12 @@ public class Lessor {
 	private static final short PUSH_BACK_UN_HEALTH = 1;
 
 	/** Because the removed instance is marked, it cannot be deleted and pushed back to the time wheel */
-	private static final short PUSH_BACK_NEED_DELETE = 2;
+	private static final short PUSH_BACK_NO_ALLOW_DELETE = 2;
 
 	/** The example heartbeat is processed normally, and the time wheel is calculated again */
 	private static final short PUSH_BACK_NORMAL = 3;
+
+	private static final short PUSH_BACK_NO_NEED_CHECK = 4;
 
 	private class Slot {
 		// Used for the linked-list datastructure
@@ -351,53 +368,51 @@ public class Lessor {
 		 */
 		public void expireTimeouts() {
 			OverdueWrapper timeout = head;
-
 			long currentTime = System.currentTimeMillis();
+
+			boolean instanceCanExpire = config.isExpireInstance();
 
 			// process all timeouts
 			while (timeout != null) {
 				OverdueWrapper next = timeout.next;
 				if (timeout.remainingRounds <= 0) {
 					final Instance instance = timeout.target;
-
 					next = remove(timeout);
-
 					long delayNs = -1L;
 					short pullBack = NOT_PUSH_BACK;
 					boolean isHealth = true;
 
-					// 当前实例健康，但是心跳超时，先行设置实例为不健康
-					if (instance.getLastBeat() + instance.getInstanceHeartBeatTimeOut() - currentTime < 0) {
-						isHealth = false;
-						if (!instance.isMarked() && instance.isHealthy()) {
-							instance.setHealthy(false);
-							unHealth.add(instance);
+					if (switchDomain.isHealthCheckEnabled()) {
+						if (instance.getLastBeat() + instance.getInstanceHeartBeatTimeOut() - currentTime < 0) {
+							isHealth = false;
+							if (!instance.isMarked() && instance.isHealthy()) {
+								instance.setHealthy(false);
+								unHealth.add(instance);
+							}
+							pullBack = PUSH_BACK_UN_HEALTH;
+							delayNs = (instance.getLastBeat() + instance.getIpDeleteTimeout() - currentTime) * 1000000L;
 						}
 
-						// 假设当前实例虽然不健康，但是还不至于需要被摘除，因此需要被重新压回到时间轮中进行摘除计算。
-						pullBack = PUSH_BACK_UN_HEALTH;
-						delayNs = (instance.getLastBeat() + instance.getIpDeleteTimeout() - currentTime) * 1000000L;
-					}
-
-					// 当前实例不健康，且已经达到了需要被摘除的时间点
-					if (instance.getLastBeat() + instance.getIpDeleteTimeout() - currentTime <= 0) {
-						isHealth = false;
-						if (!instance.isMarked()) {
-							// 实例被摘除，无需重新压入时间轮
-							alreadyExpire.add(instance);
-							pullBack = NOT_PUSH_BACK;
-							delayNs = -1L;
-						} else {
-							// 实例不能被摘除，重新压入时间轮
-							pullBack = PUSH_BACK_NEED_DELETE;
-							delayNs = instance.getIpDeleteTimeout();
+						if (instance.getLastBeat() + instance.getIpDeleteTimeout() - currentTime <= 0) {
+							isHealth = false;
+							if (instanceCanExpire && !instance.isMarked()) {
+								alreadyExpire.add(instance);
+								pullBack = NOT_PUSH_BACK;
+								delayNs = -1L;
+							}
+							else {
+								pullBack = PUSH_BACK_NO_ALLOW_DELETE;
+								delayNs = instance.getIpDeleteTimeout();
+							}
 						}
-					}
 
-					// 心跳没有超时，也没有需要被摘除，即实例的租约续上了，重新压入
-					if (isHealth) {
-						pullBack = PUSH_BACK_NORMAL;
-						delayNs = (instance.getLastBeat() + instance.getInstanceHeartBeatTimeOut() - currentTime) * 1000000L;
+						if (isHealth) {
+							pullBack = PUSH_BACK_NORMAL;
+							delayNs = (instance.getLastBeat() + instance.getInstanceHeartBeatTimeOut() - currentTime) * 1000000L;
+						}
+					} else {
+						pullBack = PUSH_BACK_NO_NEED_CHECK;
+						delayNs = instance.getInstanceHeartBeatTimeOut() * 1000000L;
 					}
 
 					if (pullBack != NOT_PUSH_BACK) {

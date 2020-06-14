@@ -87,7 +87,7 @@ public class Instance extends com.alibaba.nacos.api.naming.pojo.Instance impleme
     }
 
     public void setLastBeat(long lastBeat) {
-        UPDATER.compareAndSet(this, this.lastBeat, Math.max(this.lastBeat, lastBeat));
+        UPDATER.compareAndSet(this, this.lastBeat, Math.max(getLastBeat(), lastBeat));
     }
 
     public Instance(String ip, int port) {

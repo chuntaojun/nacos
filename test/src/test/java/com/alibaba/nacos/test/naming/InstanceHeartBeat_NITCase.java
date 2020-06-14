@@ -23,14 +23,17 @@ import com.alibaba.nacos.common.utils.ThreadUtils;
 import com.alibaba.nacos.core.cluster.Member;
 import com.alibaba.nacos.core.cluster.ServerMemberManager;
 import com.alibaba.nacos.core.utils.ApplicationUtils;
+import com.alibaba.nacos.naming.core.Cluster;
 import com.alibaba.nacos.naming.core.DistroMapper;
 import com.alibaba.nacos.naming.core.Instance;
 import com.alibaba.nacos.naming.core.LessorCenter;
 import com.alibaba.nacos.naming.healthcheck.RsInfo;
 import com.alibaba.nacos.naming.misc.GlobalConfig;
 import com.alibaba.nacos.naming.misc.SwitchDomain;
+import org.junit.After;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.mock.web.MockServletContext;
@@ -52,16 +55,20 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 
-public class LessorCenterTest {
+@Ignore
+public class InstanceHeartBeat_NITCase {
 
 	private static DistroMapper mapper;
 
 	private static GlobalConfig config;
+	private static SwitchDomain switchDomain;
 
 	private static int service_num = 100;
-	private static int instance_num = 1000;
+	private static int instance_num = 1_000;
 
 	private static Collection<Member> members;
+
+	private static int mod = 7;
 
 	static {
 		try {
@@ -70,6 +77,13 @@ public class LessorCenterTest {
 			members = Collections
 					.singletonList(Member.builder().ip("1.1.1.1").port(888).build());
 			config = new GlobalConfig();
+			switchDomain = new SwitchDomain() {
+
+				@Override
+				public boolean isHealthCheckEnabled() {
+					return true;
+				}
+			};
 
 			ApplicationUtils.setLocalAddress("1.1.1.1:8848");
 			mapper = new DistroMapper(new ServerMemberManager(new MockServletContext()) {
@@ -82,48 +96,60 @@ public class LessorCenterTest {
 		}
 		catch (Exception e) {
 			e.printStackTrace();
+			Assert.fail();
 		}
 	}
 
 	static final ScheduledExecutorService EXECUTOR_SERVICE = Executors
 			.newScheduledThreadPool(Runtime.getRuntime().availableProcessors() << 2);
-	private static final Map<String, Map<String, Instance>> STORAGE = new ConcurrentHashMap<>();
-	private static final Set<Instance> ALREADY_UN_HEALTH = new ConcurrentHashSet<>();
 
+	private static final Map<String, Service> STORAGE = new ConcurrentHashMap<>(64);
+	private static final Set<Instance> ALREADY_UN_HEALTH = new ConcurrentHashSet<>();
 	private static final Set<Instance> ALREADY_REMOVE = new ConcurrentHashSet<>();
 
-	private static final String CLUSTER_NAME = "DEFAULT_CLUSTER";
+	private static final Map<String, Set<Instance>> slow = new ConcurrentHashMap<>(64);
+	private static final Map<String, Set<Instance>> normal = new ConcurrentHashMap<>(64);
+
+	private static final String CLUSTER_NAME = "LESSSPRING";
+
+	private static long startTime = 0L;
+
+	private static final BiConsumer<Collection<Instance>, Boolean> consumer = (instances, isUnHealth) -> {
+		List<Instance> failedInstances = new ArrayList<>();
+		for (Instance instance : instances) {
+			final String serviceName = instance.getServiceName();
+			if (normal.get(serviceName).contains(instance)) {
+				failedInstances.add(instance);
+			} else {
+				if (isUnHealth) {
+					ALREADY_UN_HEALTH.add(instance);
+				} else {
+					ALREADY_REMOVE.add(instance);
+				}
+			}
+		}
+
+		if (startTime != -1L && ALREADY_REMOVE.size() == slow.values().stream().map(Set::size)
+				.reduce(Integer::sum).get()) {
+			System.out.println("Task completion time : " + (System.currentTimeMillis() - startTime) + " Ms");
+			startTime = -1L;
+		}
+
+		System.out.println(
+				"isUnHealth : " + isUnHealth + ", failed : " + failedInstances.size() + ", total : " + instances.size() + ", error rate is several percent : " + (
+						(failedInstances.size() * 1.0) / instances.size()) + ", total unHealth instances : " + ALREADY_UN_HEALTH.size() + ", total remove instances : " + ALREADY_REMOVE.size());
+	};
 
 	private static final LessorCenter LESSOR_CENTER = new LessorCenter(1, 16, null,
-			mapper, config) {
+			mapper, config, switchDomain) {
 		@Override
 		public BiConsumer<Collection<Instance>, Boolean> createConsumer() {
-			return (instances, isUnHealth) -> {
-				List<Instance> failedInstances = new ArrayList<>();
-				for (Instance instance : instances) {
-					final String serviceName = instance.getServiceName();
-					if (normal.get(serviceName).contains(instance)) {
-						Assert.fail();
-					} else {
-						if (isUnHealth) {
-							ALREADY_UN_HEALTH.add(instance);
-						} else {
-							ALREADY_REMOVE.add(instance);
-						}
-					}
-				}
-				System.out.println(
-						"isUnHealth : " + isUnHealth + ", failed : " + failedInstances.size() + ", total : " + instances.size() + ", error rate is several percent : " + (
-								(failedInstances.size() * 1.0) / instances.size()) + ", total unHealth instances" + ALREADY_UN_HEALTH.size() + ", total remove instances : " + ALREADY_REMOVE.size());
-			};
+			return consumer;
 		}
 	};
 
-	private static final Map<String, Set<Instance>> slow = new ConcurrentHashMap<>();
-	private static final Map<String, Set<Instance>> normal = new ConcurrentHashMap<>();
-
-	@BeforeClass
-	public static void beforeClass() {
+	@Before
+	public void beforeMethod() {
 		initData();
 		registerInstance();
 
@@ -134,14 +160,44 @@ public class LessorCenterTest {
 				.reduce(Integer::sum));
 	}
 
+	@After
+	public void afterMethod() {
+		STORAGE.forEach((serviceName, service) -> {
+			try {
+				service.destroy();
+			}
+			catch (Exception e) {
+				e.printStackTrace();
+				Assert.fail();
+			}
+		});
+
+		STORAGE.clear();
+		normal.clear();
+		slow.clear();
+		ALREADY_UN_HEALTH.clear();
+		ALREADY_REMOVE.clear();
+	}
+
+	private void register_heart_beat() {
+		normal.forEach((serviceName, services) -> services.forEach(LESSOR_CENTER::register));
+		slow.forEach((serviceName, services) -> services.forEach(LESSOR_CENTER::register));
+	}
+
 	@Test
-	public void test_object_expire() {
+	public void test_new_object_expire() {
+		startTime = System.currentTimeMillis();
+		register_heart_beat();
+		func();
+	}
+
+	private void func() {
 		normal.forEach((serviceName, instances) -> instances.forEach(
-				instance -> sendBeat(serviceName, instance, EXECUTOR_SERVICE, true)));
+				instance -> sendBeat(serviceName, instance, EXECUTOR_SERVICE, true, true)));
 		//		slow.forEach((serviceName, instance) -> sendBeat(serviceName, instance, slowExecutor, false));
 
 		int slowInstance = slow.values().stream().map(Set::size)
-				.reduce(Integer::sum).get();
+				.reduce(Integer::sum).orElse(0);
 		while (ALREADY_UN_HEALTH.size() != slowInstance) {
 			ThreadUtils.sleep(2_000L);
 		}
@@ -163,9 +219,13 @@ public class LessorCenterTest {
 					.getGroupedName(NamingBase.randomDomainName(),
 							Constants.DEFAULT_GROUP);
 			STORAGE.computeIfAbsent(serviceName, key -> {
-				Map<String, Instance> map = new ConcurrentHashMap<>();
+				Service service = new Service();
+				service.setName(key);
+				Cluster cluster = new Cluster(CLUSTER_NAME, service);
+				service.addCluster(cluster);
+
 				count.incrementAndGet();
-				return map;
+				return service;
 			});
 			if (count.get() == service_num) {
 				return;
@@ -178,11 +238,11 @@ public class LessorCenterTest {
 		final Object monitor = new Object();
 		final long startTime = System.currentTimeMillis();
 		Set<String> ipSet = new HashSet<>();
-		STORAGE.forEach((serviceName, map) -> EXECUTOR_SERVICE.execute(() -> {
+		STORAGE.forEach((serviceName, service) -> EXECUTOR_SERVICE.execute(() -> {
 			try {
+				List<Instance> instances = new ArrayList<>(instance_num);
 				for (int i = 0; i < instance_num; i++) {
 					String ip;
-
 					synchronized (monitor) {
 						for (; ; ) {
 							ip = getRandomIp();
@@ -196,17 +256,17 @@ public class LessorCenterTest {
 					final int port = 12345;
 					final Instance instance = Instance.builder().serviceName(serviceName).ip(ip).port(port).clusterName(CLUSTER_NAME).ephemeral(true)
 							.build();
-					if (i % 7 == 0) {
-						slow.computeIfAbsent(serviceName, s -> new HashSet<>(1024));
+					slow.computeIfAbsent(serviceName, s -> new HashSet<>(instance_num));
+					normal.computeIfAbsent(serviceName, s -> new HashSet<>(instance_num));
+					if ((i + 1) % mod == 0) {
 						slow.get(serviceName).add(instance);
 					}
 					else {
-						normal.computeIfAbsent(serviceName, s -> new HashSet<>(1024));
 						normal.get(serviceName).add(instance);
 					}
-					map.put(instance.getDatumKey(), instance);
-					LESSOR_CENTER.register(instance);
+					instances.add(instance);
 				}
+				service.getClusterMap().get(CLUSTER_NAME).updateIPs(instances, true);
 			} catch (Throwable ex) {
 				ex.printStackTrace();
 				Assert.fail();
@@ -218,43 +278,50 @@ public class LessorCenterTest {
 		ThreadUtils.latchAwait(latch);
 		System.out.println(
 				"Instance creation time : " + (System.currentTimeMillis() - startTime)
-						+ " Ms");
+						+ " Ms, total ip size : " + ipSet.size());
 		Assert.assertEquals(service_num * instance_num, ipSet.size());
 	}
 
 	private static void sendBeat(String serviceName, Instance instance,
-			ScheduledExecutorService executorService, boolean isNormal) {
+			ScheduledExecutorService executorService, boolean isNormal, boolean isNew) {
 		final RsInfo rsInfo = RsInfo.builder().serviceName(serviceName)
 				.cluster(instance.getClusterName()).ip(instance.getIp())
 				.port(instance.getPort()).build();
-		onBeat(rsInfo);
+		onBeat(rsInfo, isNew);
 		long delay = 5;
 		if (!isNormal) {
 			delay += ThreadLocalRandom.current().nextInt(5);
 		}
 		executorService.schedule(
-				() -> sendBeat(serviceName, instance, executorService, isNormal), delay,
+				() -> sendBeat(serviceName, instance, executorService, isNormal, isNew), delay,
 				TimeUnit.SECONDS);
 	}
 
-	private static void onBeat(RsInfo rsInfo) {
-		final String serviceName = rsInfo.getServiceName();
-		final String ip = rsInfo.getIp();
-		final int port = rsInfo.getPort();
-		final String clusterName = rsInfo.getCluster();
-		final String key = Instance.buildDatumKey(ip, port, clusterName);
-		Map<String, Instance> map = STORAGE.get(serviceName);
-		if (map.containsKey(key)) {
-			map.get(key).setLastBeat(System.currentTimeMillis());
+	private static void onBeat(RsInfo rsInfo, boolean isNew) {
+		if (STORAGE.isEmpty()) {
+			return;
 		}
-		else {
-			Instance instance = Instance.builder().ip(ip).port(port)
-					.clusterName(clusterName).lastBeat(System.currentTimeMillis())
-					.build();
-			LESSOR_CENTER.register(instance);
-			map.put(key, instance);
-			System.err.println("The instance does not exist");
+		try {
+			final String serviceName = rsInfo.getServiceName();
+			Service service = STORAGE.get(serviceName);
+			service.processClientBeat(rsInfo);
+		} catch (Throwable ex) {
+			ex.printStackTrace();
+			Assert.fail();
 		}
+	}
+
+	private static class Service extends com.alibaba.nacos.naming.core.Service {
+
+		@Override
+		public void processClientBeat(RsInfo rsInfo) {
+			String clusterName = rsInfo.getCluster();
+			String ipKey = rsInfo.getDatumKey();
+			Cluster cluster = getClusterMap().get(clusterName);
+			Instance instance = cluster.find(ipKey, true);
+			instance.setLastBeat(System.currentTimeMillis());
+		}
+
 	}
 
 	// copy from https://blog.csdn.net/zhengxiongwei/article/details/78486146
